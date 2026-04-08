@@ -23,7 +23,7 @@ from multiprocessing import Process
 
 app = Flask(__name__)
 
-app.secret_key = secrets.token_hex() 
+app.secret_key = secrets.token_hex()
 
 
 from sqlalchemy import create_engine
@@ -80,7 +80,7 @@ class CityDetails:
         self.month = month
         self.year = year
         self.params = params
-   
+
 
 class Admin(Base):
     __tablename__ = 'admin'
@@ -199,67 +199,86 @@ class ETL():
             city_name = city.name
             city_url = city.url
             r = requests.get(city_url)
+
             # 1. Assignment 4 TODO: Check if the city has data available by checking for return code 404
+            if r.status_code == 404:
+                app.logger.info(f"Skipping {city_name}: Data not found (404)")
+                continue  # skip to the next city in the loop
+
+            # if not a 404 save the data
             city_data = r.text
             data_dir = os.getcwd() + "/data"
-            os.system("mkdir -p " + data_dir)
-            fp = open(data_dir + "/" + city_name,"w")
+
+            # Note: Using os.makedirs with exist_ok=True is a cleaner Pythonic way to handle directories
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+
+            fp = open(data_dir + "/" + city_name, "w")
             fp.write(city_data)
+            fp.close()
 
         dbsession = DBSession()
-        for filename in os.listdir(os.getcwd() + "/data"):
-            print("-------")
-            print(filename)
-            fPath = os.getcwd() + "/data/" + filename
-            fp = open(fPath,"r")
-            lines = fp.readlines()
-            param_values = {}
-            #for l in range(0, len(lines)-2, 2):
-            for l in range(0, len(lines)):
-                if l+1 > len(lines):
-                    break
-                #line = lines[l] + lines[l+1]
-                line = lines[l]
-                #print(line)
-                parts = line.split(" ")
-                year_month_param = parts[0]
-                rest = year_month_param[11:]
-                year = rest[0:4]
-                month = rest[4:6]
-                param = rest[6:]
-                if param in weather_parameters_to_track:
-                    #print(year + " " + month + " " + param)
-                    values1 = []
-                    values = []
-                    for i in range(len(parts)):
-                        if i > 0:
-                            part = parts[i].strip()
-                            if i%2 == 0:
-                                if part and (part != '0T' and part != '0P'):
-                                    values1.append(part)
-                    for j in range(0, len(values1), 2):
-                        values.append(values1[j])
-                    param_values[year+"-"+month+"-"+param] = values
-            #print(param_values)
-            for key, val in param_values.items():
-                valString = ','.join(val)
-                city = dbsession.query(City).filter_by(name=filename).first()
-                if city != None:
-                    exists = dbsession.query(WeatherParameter).filter_by(cityId=city.id, year_month_param=key)
-                    if exists.count() == 0:
-                        weather_params = WeatherParameter(year_month_param=key, values=valString, cityId=city.id)
-                        dbsession.add(weather_params)
-                        dbsession.commit()
-        dbsession.close()
+        try:
+
+            for filename in os.listdir(os.getcwd() + "/data"):
+                # paet of the transformation of weather data to store in DB appropriately
+                print("-------")
+                print(filename)
+                fPath = os.getcwd() + "/data/" + filename
+                fp = open(fPath,"r")
+                lines = fp.readlines()
+                param_values = {}
+                #for l in range(0, len(lines)-2, 2):
+                for l in range(0, len(lines)):
+                    if l+1 > len(lines):
+                        break
+                    #line = lines[l] + lines[l+1]
+                    line = lines[l]
+                    #print(line)
+                    parts = line.split(" ")
+                    year_month_param = parts[0]
+                    rest = year_month_param[11:]
+                    year = rest[0:4]
+                    month = rest[4:6]
+                    param = rest[6:]
+                    if param in weather_parameters_to_track:
+                        #print(year + " " + month + " " + param)
+                        values1 = []
+                        values = []
+                        for i in range(len(parts)):
+                            if i > 0:
+                                part = parts[i].strip()
+                                if i%2 == 0:
+                                    if part and (part != '0T' and part != '0P'):
+                                        values1.append(part)
+                        for j in range(0, len(values1), 2):
+                            values.append(values1[j])
+                        param_values[year+"-"+month+"-"+param] = values
+                #print(param_values)
+                for key, val in param_values.items():
+                    valString = ','.join(val)
+                    city = dbsession.query(City).filter_by(name=filename).first()
+                    if city != None:
+                        exists = dbsession.query(WeatherParameter).filter_by(cityId=city.id, year_month_param=key)
+                        if exists.count() == 0:
+                            weather_params = WeatherParameter(year_month_param=key, values=valString, cityId=city.id)
+                            dbsession.add(weather_params)
+
+                            dbsession.commit()
+        finally:
+
+            dbsession.close()
 
     def run(self):
+        # infinite loop
+        # every 10 sec, check if new city data weather needs to be read from weather_data
+        # if so, process & store in DB
         while True:
             time.sleep(10)
             app.logger.info("Inside ETL.")
             self._load_data()
 
 etl = ETL()
-
 
 
 
@@ -283,10 +302,9 @@ def add_admin():
         admin = Admin(name=name, password=password)
         session.add(admin)
         session.commit()
-
-    session.close()
-    return admin.as_dict()
-
+        result = admin.as_dict()
+        session.close()
+        return result
 
 @app.route("/admin")
 def get_admins():
@@ -548,15 +566,16 @@ def get_user_cities(dbsession, userid):
     return cities
 
 
-# 2. Assignment 4 
-# Query cities registered by admin 
+# 2. Assignment 4
+# Query cities registered by admin
 # Return the cities list where every entry will be a city dict of the form [city{'name'}:'Ausitn', city{'name'}: 'Dallas']
 def get_admin_cities(dbsession):
-    cities = []
-    city = {}
-    city['name'] = 'CHANGE THIS TO CITY added by ADMIN'
-    cities.append(city)
-    return cities 
+    admin_cities = []
+    # query all cities registered by admins in the City table
+    cities = dbsession.query(City).all()
+    for city in cities:
+        admin_cities.append({'name': city.name})
+    return admin_cities
 
 
 @app.route("/status", methods=['GET'])
@@ -565,7 +584,7 @@ def city_status():
     app.logger.info("Inside city_status")
     city_name = request.args.get('city').strip()
     app.logger.info("City status:" + city_name)
-    
+
     username = ''
     if 'username' in session:
         username = session['username']
@@ -591,25 +610,52 @@ def city_status():
     return json.dumps(op)
 
 
-## 3. Assignment 4 
+## 3. Assignment 4
 ## Expected Output:
 ### {'2023-08-TMAX': '411,406,400,406,411,406,411,411,422,417,422,411,411,411,389,400,433,411,400,417,-9999,-9999,-9999', '2023-08-TMIN': '256,261,256,261,256,256,256,256,250,256,261,267,261,250,267,228,250,250,239,256,-9999,-9999,-9999', '2023-08-PRCP': '-9999,-9999,-9999'}
 @app.route("/weather_params", methods=['GET'])
 def city_status_graph():
-    app.logger.info("Inside city_status")
+    app.logger.info("Inside city_status_graph")
     city_name = request.args.get('city').strip()
-    app.logger.info("City status:" + city_name)
-    
+
     username = ''
     if 'username' in session:
         username = session['username']
 
-    app.logger.info("Username:" + username + " City:" + city_name)    
+    app.logger.info("Username:" + username + " City:" + city_name)
+
+    dbsession = DBSession()
+
+    # get User and City ids
+    user = dbsession.query(User).filter_by(name=username).first()
+    city = dbsession.query(City).filter_by(name=city_name).first()
+
+    if not user or not city:
+        return json.dumps({"error": "User or City not found"})
+
+    # find what this user is tracking for this city
+    user_city = dbsession.query(UserCity).filter_by(userId=user.id, cityId=city.id).first()
 
     op = {}
-    op['TODO'] = 'Generate the Expected Output shown above.'
+    if user_city:
+        # fet the params and split
+        selected_params = user_city.weather_params.split(',')
+        year_month = f"{user_city.year}-{user_city.month}"
 
+        for param in selected_params:
+            # construct key
+            key = f"{year_month}-{param}"
 
+            # look for the data in the WeatherParameter table
+            record = dbsession.query(WeatherParameter).filter_by(cityId=city.id, year_month_param=key).first()
+
+            if record:
+                op[key] = record.values
+            else:
+                # if no data found, return -9999
+                op[key] = "-9999"
+
+    dbsession.close()
     app.logger.info(op)
     return json.dumps(op)
 
@@ -671,7 +717,7 @@ def registercity():
         cities = dbsession.query(City).filter_by(name=city_name)
     except Exception as e:
         app.logger.info(e)
-    
+
     user = users.first()
     user_cities = get_user_cities(dbsession, user.id)
 
@@ -685,7 +731,7 @@ def registercity():
     in_mem_user_cities[username] = my_cities
 
     present = False
-    if cities.count() > 0: 
+    if cities.count() > 0:
         for c in cities:
             if c.name == city_name:
                 present = True
@@ -698,7 +744,7 @@ def registercity():
         city = cities.first()
         presentcity = dbsession.query(UserCity).filter_by(userId=user.id, cityId=city.id)
         if presentcity.count() == 0:
-            usercity = UserCity(userId=user.id, cityId=city.id, year=year, month=month, 
+            usercity = UserCity(userId=user.id, cityId=city.id, year=year, month=month,
                                 weather_params=','.join(user_weather_params))
             dbsession.add(usercity)
             dbsession.commit()
@@ -712,7 +758,7 @@ def registercity():
                 name=username,
                 status_string="Registered city " + city_name + ".",
                 addButton_style="display:none;",
-                addCityForm_style="display:none;",                
+                addCityForm_style="display:none;",
                 regForm_style="display:none;",
                 status_style="display:block;")
     else:
@@ -749,6 +795,8 @@ def login():
     dbsession = DBSession()
     users = dbsession.query(User).filter_by(name=username)
     user_cities = []
+    if users.count() == 0:
+        return render_template('not-found.html', user=username)
     if users.count() > 0:
         user = users.first()
         user_cities = get_user_cities(dbsession, user.id)
@@ -784,11 +832,13 @@ def adminlogin():
     app.logger.info("Password:%s", password)
 
     session['username'] = username
-
-    user_cities = in_mem_cities
+    dbsession = DBSession()
+    admin_cities = get_admin_cities(dbsession)
+    dbsession.close()
     return render_template('welcome.html',
             welcome_message = "Personal Weather Portal - Admin Panel",
-            cities=user_cities,
+            cities=[],
+            available_cities = admin_cities,
             name=username,
             addButton_style="display:inline;",
             addCityForm_style="display:inline;",
@@ -806,6 +856,12 @@ if __name__ == "__main__":
     app.debug = False
     app.logger.info('Portal started...')
     # Start the ETL process
+    # in main function, initialize ETL obj
+    # two dif processes as a part of application
+    # Process -> when u run program, parts that start executing
     p = Process(target=etl.run)
     p.start()
-    app.run(host='0.0.0.0', port=5009) 
+    # backend process: job is to read weather data & store in the DB continously
+    # ETL process looks at cities admin has registers, looks at URLs
+    # run continously to load additional data that admin has added
+    app.run(host='0.0.0.0', port=5009)

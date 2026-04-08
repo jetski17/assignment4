@@ -148,22 +148,19 @@ input.invalid {
 		</form>
 		</div>
 		</div>
-		
-		<div class="col-md-2 flex-grow-1 div_right" id="entity-form-container" style="height:90vh;background-color: lightblue;float:left; margin-top:-16px;">
-                        <div class="row"> <!-- row2 -->
-			<h3>Available cities:</h3>
-			<!-- Assignment 4 Add ordered list for cities -->
-                        <div>
-                        </div>
-                        </div> <!-- row2 -->
 
-		</div>
-
-
-		</div>
-
-
-  		<script src=../static/scripts/inputhandler.js></script>
-	</body>
-
+		<div class="col-md-2 flex-grow-1 div_right" id="entity-form-container-right" style="height:90vh;background-color: lightblue;float:left; margin-top:-16px;">
+            <div class="row"> <div class="col">
+                    <h3>Available cities:</h3>
+                    <div id="available_cities">
+                        <ol>
+                            {% for city in available_cities %}
+                                <li>{{ city.name }}</li>
+                            {% endfor %}
+                        </ol>
+                    </div>
+                </div>
+            </div> </div>
+    </div> </div> <script src="{{ url_for('static', filename='scripts/inputhandler.js') }}"></script>
+</body>
 </html>
